@@ -33,30 +33,10 @@ class XGBoost_NoiseAware(NoiseAwareModel):
         #Trained Tree
         self.trained_tree = None
         self.seed = None
-      
-    def _logregobj(preds, dtrain):
-        #Logistic Regression Objective
-        labels = dtrain.get_label()
-        preds = 1.0 / (1.0 + np.exp(-preds))
-        grad = preds - labels
-        hess = preds * (1.0-preds)
-        return grad, hess
-
-    def _evalerror(preds, dtrain):
-        #Log Likelihood Error
-        labels = dtrain.get_label()
-        errors = np.mean(labels*np.log(1+np.exp(-preds))+(1-labels)*np.log(1+np.exp(preds)))
-        return 'error', errors
-    
-    def _check_input(self, num_rounds, eta, min_child_weight):
-        #TODO: Check all parameters are within their valid range
-        if issparse(X):
-            raise Exception("Sparse input matrix. Use SparseLogisticRegression")
-        return X
 
     def train(self, X, training_marginals, num_rounds=10, eta=0.3,
         min_child_weight=1, max_depth=6, gamma=0, subsample=1, colsample_bytree = 1, lambda_val = 1, alpha_val = 0, 
-        verbose = False, which = 0, seed=None, rebalance=False):
+        verbose = False, seed=None, rebalance=False):
         
         if verbose:
             print("verbose")
@@ -69,7 +49,6 @@ class XGBoost_NoiseAware(NoiseAwareModel):
         self.lambda_val = lambda_val
         self.alpha_val = alpha_val
         self.num_rounds = num_rounds
-        self.which = which
         self.seed = seed
         self.X = X
         train_idxs = LabelBalancer(training_marginals).get_train_idxs(rebalance)
@@ -80,15 +59,10 @@ class XGBoost_NoiseAware(NoiseAwareModel):
         n = X_train.shape[0]
         dtrain = xgb.DMatrix( X_train, label=y_train)
         watchlist = [(dtrain, 'train')]
-        if which == 0:
-            param = {'eta': eta, 'min_child_weight': min_child_weight, 'max_depth': max_depth, 'gamma': gamma, 
-                     'subsample': subsample, 'colsample_bytree': colsample_bytree, 'lambda': lambda_val, 'alpha': alpha_val,
-                     'objective':'binary:logistic', 'eval_metric': 'logloss', 'silent':not(verbose)}
-            self.trained_tree = xgb.train(param, dtrain, num_rounds, watchlist, verbose_eval = verbose)
-        else:
-            param = {'eta': eta, 'min_child_weight': min_child_weight, 'max_depth': max_depth, 'gamma': gamma, 
-                     'subsample': subsample, 'colsample_bytree': colsample_bytree, 'lambda': lambda_val, 'alpha': alpha_val, 'silent':not(verbose)}
-            self.trained_tree = xgb.train(param, dtrain, num_round, watchlist, self._logregobj, self._evalerror, verbose_eval = verbose)
+        param = {'eta': eta, 'min_child_weight': min_child_weight, 'max_depth': max_depth, 'gamma': gamma, 
+                 'subsample': subsample, 'colsample_bytree': colsample_bytree, 'lambda': lambda_val, 'alpha': alpha_val,
+                 'objective':'binary:logistic', 'eval_metric': 'logloss', 'silent':not(verbose)}
+        self.trained_tree = xgb.train(param, dtrain, num_rounds, watchlist, verbose_eval = verbose)
         
     def save(self, model_name):
         self.trained_tree.save_model(model_name+'.model')
