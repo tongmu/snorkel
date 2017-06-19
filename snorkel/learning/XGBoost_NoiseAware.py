@@ -1,9 +1,14 @@
 import numpy as np
 import xgboost as xgb
+from .disc_learning import NoiseAwareModel
 from .utils import print_scores
 from .utils import marginals_to_labels, MentionScorer
+import cPickle
+from scipy.sparse import csr_matrix, issparse
+from time import time
+from utils import LabelBalancer
 
-class XGBoost_NoiseAware(object):
+class XGBoost_NoiseAware(NoiseAwareModel):
 
     def __init__(self, save_file=None, name='XGBoost', n_threads=None):
         """Noise-aware XGBoost"""
@@ -24,7 +29,6 @@ class XGBoost_NoiseAware(object):
         
         #Data
         self.X = None
-        self.marginals = None
         
         #Trained Tree
         self.trained_tree = None
@@ -50,9 +54,9 @@ class XGBoost_NoiseAware(object):
             raise Exception("Sparse input matrix. Use SparseLogisticRegression")
         return X
 
-    def train(self, X, train_marginals, num_rounds=10, eta=0.3,
+    def train(self, X, training_marginals, num_rounds=10, eta=0.3,
         min_child_weight=1, max_depth=6, gamma=0, subsample=1, colsample_bytree = 1, lambda_val = 1, alpha_val = 0, 
-        verbose = False, which = 0, seed=None):
+        verbose = False, which = 0, seed=None, rebalance=False):
         
         if verbose:
             print("verbose")
@@ -68,9 +72,13 @@ class XGBoost_NoiseAware(object):
         self.which = which
         self.seed = seed
         self.X = X
-        self.marginals = train_marginals
+        train_idxs = LabelBalancer(training_marginals).get_train_idxs(rebalance)
         
-        dtrain = xgb.DMatrix( self.X, label=self.marginals)
+        X_train = X[train_idxs, :]
+        y_train = np.ravel(training_marginals)[train_idxs]
+        # Run mini-batch SGD
+        n = X_train.shape[0]
+        dtrain = xgb.DMatrix( X_train, label=y_train)
         watchlist = [(dtrain, 'train')]
         if which == 0:
             param = {'eta': eta, 'min_child_weight': min_child_weight, 'max_depth': max_depth, 'gamma': gamma, 
@@ -86,23 +94,6 @@ class XGBoost_NoiseAware(object):
         self.trained_tree.save_model(model_name+'.model')
     def load(self, model_name):
         self.trained_tree.load_model(model_name+'.model')
-    
-    def score(self, session, X_test, test_labels, gold_candidate_set=None, 
-        b=0.5, set_unlabeled_as_neg=False, display=True, scorer=None,
-        **kwargs):
-        dtest = xgb.DMatrix( X_test, label=test_labels)
-        
-        preds_prob = self.trained_tree.predict(dtest)
-        if self.which == 0:
-            preds = np.round(preds_prob)
-        else:
-            preds[preds_prob > 0] = 1
-            preds[preds_prob < 0] = 0
-
-        TP = np.nonzero(np.logical_and(preds,test_labels))[0]
-        TN = np.nonzero(np.logical_and(np.logical_not(preds),np.logical_not(test_labels)))[0]
-        FP = np.nonzero(np.logical_and(preds,np.logical_not(test_labels)))[0]
-        FN = np.nonzero(np.logical_and(np.logical_not(preds),test_labels))[0]
-        print_scores(len(TP), len(FP), len(TN), len(FN))
-        return TP, FP, TN, FN
-       
+    def marginals(self, X_test):
+        dtest = xgb.DMatrix(X_test)
+        return self.trained_tree.predict(dtest)
